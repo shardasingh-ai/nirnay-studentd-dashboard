@@ -1,69 +1,21 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>SID Dashboard</title>
-<style>
-  body{font-family:system-ui,Arial,sans-serif;max-width:900px;margin:40px auto;padding:0 16px}
-  .card{border:1px solid #ddd;border-radius:8px;padding:16px;margin-top:16px}
-  label{display:block;margin:12px 0 6px;font-weight:600}
-  input[type=text]{width:100%;padding:10px;border:1px solid #bbb;border-radius:6px}
-  button{padding:10px 16px;border:0;border-radius:6px;cursor:pointer}
-  .primary{background:#222;color:#fff}
-  table{width:100%;border-collapse:collapse;margin-top:12px}
-  th,td{border:1px solid #eee;padding:8px;font-size:14px} th{background:#fafafa;text-align:left}
-  .muted{color:#666;font-size:13px}
-  .rowcount{margin-top:8px;font-size:13px;color:#444}
-  .error{color:#b00020}
-</style>
-</head>
-<body>
-<h1>SID Dashboard</h1>
-<p class="muted">Enter your <strong>SID</strong> to see your activity.</p>
-
-<div class="card">
-  <label for="sid">SID</label>
-  <input id="sid" type="text" placeholder="e.g., SID12345"/>
-  <div style="display:flex;gap:8px;margin-top:12px">
-    <button class="primary" id="btnLookup">Lookup</button>
-    <button id="btnClear">Clear</button>
-  </div>
-  <div id="status" class="rowcount"></div>
-  <div id="error" class="error"></div>
-</div>
-
-<div class="card" id="resultCard" style="display:none;">
-  <div id="summary"></div>
-  <div id="tableWrap" style="overflow:auto;max-height:65vh"></div>
-  <canvas id="miniChart" style="max-height:300px;margin-top:16px"></canvas>
-</div>
-
-<!-- Optional tiny chart lib -->
+<!-- keep Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- ADD this line so the time scale works -->
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 <script>
-  // ======= CONFIG: paste your values =======
-  const API_URL = 'https://script.google.com/macros/s/AKfycbxORG7l3D8rBHa3zEe99ZyWjcqV3fgWXmmP1tJKj_mVfUM8wyVNsZPrsIbZ_3upN5vg/exec'; // ends with /exec
+  // ======= CONFIG =======
+  const API_URL = 'https://script.google.com/macros/s/AKfycbxORG7l3D8rBHa3zEe99ZyWjcqV3fgWXmmP1tJKj_mVfUM8wyVNsZPrsIbZ_3upN5vg/exec';
   const APP_KEY = 'b9d1c0b1b0f847e0a7f44c1a93b9b2ab';
-  const el = id => document.getElementById(id);
-  let chartRef = null;
 
-  function buildTable(data){
-    if(!data || data.length===0) return '<p class="muted">No rows for this SID.</p>';
-    const headers = Object.keys(data[0]);
-    let html = '<table><thead><tr>'+headers.map(h=>`<th>${h}</th>`).join('')+'</tr></thead><tbody>';
-    data.forEach(row=>{
-      html += '<tr>'+headers.map(h=>`<td>${row[h]===undefined?'':row[h]}</td>`).join('')+'</tr>';
-    });
-    html += '</tbody></table>';
-    return html;
-  }
+  // ...
 
   function renderChart(rows){
     const c = el('miniChart'); if(!c) return;
     if(chartRef){ chartRef.destroy(); chartRef=null; }
-    // Adjust these field names to your sheet headers:
-    const dateKey = 'Date';
-    const valueKey = 'Score';
+
+    // ✅ match your sheet headers
+    const dateKey = 'activityDate';
+    const valueKey = 'timeSpent';
 
     const points = rows
       .filter(r => r[dateKey] && r[valueKey] !== undefined && r[valueKey] !== '')
@@ -73,10 +25,10 @@
     if(points.length === 0) return;
     chartRef = new Chart(c, {
       type: 'line',
-      data: { datasets: [{ label: valueKey, data: points, parsing:false, xAxisID:'x' }] },
+      data: { datasets: [{ label: 'Time Spent', data: points, parsing:false, xAxisID:'x' }] },
       options: {
         responsive:true, maintainAspectRatio:false,
-        scales:{ x:{ type:'time', time:{unit:'day'} } }
+        scales:{ x:{ type:'time', time:{ unit:'day' } }, y:{ beginAtZero:true } }
       }
     });
   }
@@ -86,25 +38,21 @@
     const sid = el('sid').value.trim(); if(!sid){ el('status').textContent=''; el('error').textContent='Enter a SID.'; return; }
     try{
       const url = `${API_URL}?key=${encodeURIComponent(APP_KEY)}&sid=${encodeURIComponent(sid)}`;
+      // (optional) debug:
+      // console.log('GET', url);
       const res = await fetch(url); if(!res.ok) throw new Error('HTTP '+res.status);
       const json = await res.json(); if(!json.ok) throw new Error(json.error||'Unknown error');
 
       el('status').textContent = `Found ${json.count} row(s) for SID "${sid}".`;
-      el('summary').innerHTML = `<strong>SID:</strong> ${sid}`;
-      el('tableWrap').innerHTML = buildTable(json.data);
+      // if your backend sends aggregates.totalTimeSpent, show it:
+      if (json.aggregates && typeof json.aggregates.totalTimeSpent !== 'undefined') {
+        el('summary').innerHTML = `<strong>SID:</strong> ${sid} &middot; <strong>Total time:</strong> ${json.aggregates.totalTimeSpent}`;
+      } else {
+        el('summary').innerHTML = `<strong>SID:</strong> ${sid}`;
+      }
+      el('tableWrap').innerHTML = buildTable(json.data || []);
       el('resultCard').style.display='block';
-      renderChart(json.data);
-    }catch(e){ el('status').textContent=''; el('error').textContent = e.message; }
+      renderChart(json.data || []);
+    }catch(e){ el('status').textContent=''; el('error').textContent = e.message || 'Failed to fetch'; }
   }
-
-  function clearUI(){
-    el('sid').value=''; el('status').textContent=''; el('error').textContent='';
-    el('resultCard').style.display='none'; if(chartRef){ chartRef.destroy(); chartRef=null; }
-  }
-
-  el('btnLookup').addEventListener('click', lookup);
-  el('btnClear').addEventListener('click', clearUI);
-  el('sid').addEventListener('keydown', (e)=>{ if(e.key==='Enter') lookup(); });
 </script>
-</body>
-</html>
